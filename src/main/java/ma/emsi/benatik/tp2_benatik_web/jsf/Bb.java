@@ -6,180 +6,75 @@ import jakarta.faces.model.SelectItem;
 import jakarta.faces.view.ViewScoped;
 import jakarta.inject.Inject;
 import jakarta.inject.Named;
-import ma.emsi.benatik.tp2_benatik_web.llm.LlmClient;
 
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
+import ma.emsi.benatik.tp2_benatik_web.llm.LlmClient;
+
 /**
  * Backing bean pour la page JSF index.xhtml.
- * Portée view pour conserver l'état de la conversation qui dure pendant plusieurs requêtes HTTP.
- * La portée view nécessite l'implémentation de Serializable (le backing bean peut être mis en mémoire secondaire).
+ * Portée view pour conserver l'état de la conversation (chat).
  */
-@Named
+@Named("bb")
 @ViewScoped
 public class Bb implements Serializable {
 
-    /**
-     * Rôle "système" que l'on attribuera plus tard à un LLM.
-     * Valeur par défaut que l'utilisateur peut modifier.
-     * Possible d'écrire un nouveau rôle dans la liste déroulante.
-     */
     private String roleSysteme;
-
-    /**
-     * Quand le rôle est choisi par l'utilisateur dans la liste déroulante,
-     * il n'est plus possible de le modifier (voir code de la page JSF), sauf si on veut un nouveau chat.
-     */
     private boolean roleSystemeChangeable = true;
 
-    /**
-     * Liste de tous les rôles de l'API prédéfinis.
-     */
-    private List<SelectItem> listeRolesSysteme;
-
-    /**
-     * Dernière question posée par l'utilisateur.
-     */
     private String question;
-    /**
-     * Dernière réponse de l'API OpenAI.
-     */
     private String reponse;
-    /**
-     * La conversation depuis le début.
-     */
     private StringBuilder conversation = new StringBuilder();
 
-    /**
-     * Contexte JSF. Utilisé pour qu'un message d'erreur s'affiche dans le formulaire.
-     */
     @Inject
-    private FacesContext facesContext;
+    private LlmClient llm;
 
-
-    /**
-     * Obligatoire pour un bean CDI (classe gérée par CDI), s'il y a un autre constructeur.
-     */
-    public Bb() {
-    }
-
-    public String getRoleSysteme() {
-        return roleSysteme;
-    }
-
-    public void setRoleSysteme(String roleSysteme) {
-        this.roleSysteme = roleSysteme;
-    }
-
-    public boolean isRoleSystemeChangeable() {
-        return roleSystemeChangeable;
-    }
-
-    public String getQuestion() {
-        return question;
-    }
-
-    public void setQuestion(String question) {
-        this.question = question;
-    }
-
-    public String getReponse() {
-        return reponse;
-    }
-
-    public void setReponse(String reponse) {
-        this.reponse = reponse;
-    }
-
-    public String getConversation() {
-        return conversation.toString();
-    }
-
-    public void setConversation(String conversation) {
-        this.conversation = new StringBuilder(conversation);
-    }
-
-    private boolean debug= false;
-
-    public boolean isDebug() {return debug;}
-
-    public void setDebug(boolean debug) {this.debug = debug;}
-
-    // Méthode pour basculer le mode debug
-    public void toggleDebug() {
-        this.setDebug(!isDebug());
-    }
-    @Inject
-    private LlmClient llmClient;
-
-    private String texteRequeteJson;
-    private String texteReponseJson;
-
-    public String getTexteRequeteJson() {
-        return texteRequeteJson;
-    }
-
-    public void setTexteRequeteJson(String texteRequeteJson) {
-        this.texteRequeteJson = texteRequeteJson;
-    }
-
-    public String getTexteReponseJson() {
-        return texteReponseJson;
-    }
-
-    public void setTexteReponseJson(String texteReponseJson) {
-        this.texteReponseJson = texteReponseJson;
-    }
-
-
-    /**
-     * Envoie la question au serveur.
-     * En attendant de l'envoyer à un LLM, le serveur fait un traitement quelconque, juste pour tester :
-     * Le traitement consiste à copier la question en minuscules et à l'entourer avec "||". Le rôle système
-     * est ajouté au début de la première réponse.
-     *
-     * @return null pour rester sur la même page.
-     */
+    /** Bouton "Envoyer" */
     public String envoyer() {
         if (question == null || question.isBlank()) {
-            FacesMessage message = new FacesMessage(FacesMessage.SEVERITY_ERROR,
-                    "Texte question vide", "Il manque le texte de la question");
-            facesContext.addMessage(null, message);
+            addMsg(FacesMessage.SEVERITY_ERROR, "Texte question vide", "Il manque le texte de la question.");
             return null;
         }
 
         try {
-            if (conversation.isEmpty()) {
+            if (roleSystemeChangeable) {
+                llm.setSystemRole(roleSysteme);
                 roleSystemeChangeable = false;
             }
 
-            String reponseLlm = llmClient.askLlm(roleSysteme, question);
-            this.reponse = reponseLlm;
+            reponse = llm.ask(question);
 
-            afficherConversation();
-            afficherConversation();
+            // Historique affiché dans la zone "conversation"
+            appendConversation(question, reponse);
 
         } catch (Exception e) {
-            FacesMessage message = new FacesMessage(FacesMessage.SEVERITY_ERROR,
-                    "Problème de connexion avec l'API du LLM",
-                    "Problème : " + e.getMessage());
-            facesContext.addMessage(null, message);
+            reponse = null;
+            addMsg(FacesMessage.SEVERITY_ERROR, "Erreur LLM", e.getMessage());
         }
-
-        return null;
+        return null; // rester sur la même vue
     }
 
+    /** Bouton "Nouveau chat" : on repart de zéro (nouvelle instance @ViewScoped) */
     public String nouveauChat() {
-        return "index";
+        // Redirection pour forcer une nouvelle vue → nouveau bean
+        return "index?faces-redirect=true";
     }
 
-    private void afficherConversation() {
-        this.conversation.append("== User:\n").append(question)
-                .append("\n== Serveur:\n").append(reponse).append("\n");
+    // --- Utilitaires ---
+    private void appendConversation(String q, String r) {
+        conversation
+                .append("== User:\n").append(q).append("\n")
+                .append("== Assistant:\n").append(r).append("\n\n");
     }
 
+    private void addMsg(FacesMessage.Severity sev, String summary, String detail) {
+        FacesContext.getCurrentInstance().addMessage(null, new FacesMessage(sev, summary, detail));
+    }
+
+    // --- Rôles prédéfinis pour la liste déroulante (optionnel si tu utilises un textarea libre) ---
+    private List<SelectItem> listeRolesSysteme;
     public List<SelectItem> getRolesSysteme() {
         if (this.listeRolesSysteme == null) {
             // Génère les rôles de l'API prédéfinis
@@ -219,4 +114,18 @@ public class Bb implements Serializable {
         return this.listeRolesSysteme;
     }
 
+    // --- Getters/Setters pour la page JSF ---
+    public String getRoleSysteme() { return roleSysteme; }
+    public void setRoleSysteme(String roleSysteme) { this.roleSysteme = roleSysteme; }
+
+    public boolean isRoleSystemeChangeable() { return roleSystemeChangeable; }
+
+    public String getQuestion() { return question; }
+    public void setQuestion(String question) { this.question = question; }
+
+    public String getReponse() { return reponse; }
+    public void setReponse(String reponse) { this.reponse = reponse; }
+
+    public String getConversation() { return conversation.toString(); }
+    public void setConversation(String conversation) { this.conversation = new StringBuilder(conversation); }
 }
